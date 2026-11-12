@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "AWS Console – Blue Dark Mode",
+  "version": "1.0.0",
+  "description": "Restores the blue-tinted dark mode in the AWS Management Console.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.console.aws.amazon.com/*",
+        "https://console.aws.amazon.com/*",
+        "https://*.console.aws/*",
+        "https://*.console.api.aws/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
