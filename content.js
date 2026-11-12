@@ -25,17 +25,21 @@
   // Strategy B (newer bundles): the blue theme is the plain base rule and
   // `.awsui-one-theme …` rules override it → re-apply the base value.
   // `norm` maps a one-theme selector and its base selector to the same key.
-  const norm = (sel) =>
-    sel
-      .replace(ONE_THEME_WHERE, "")
-      .replace(/:not\(\.awsui-one-theme\)/g, "")
-      .split(",")
-      .map((part) => {
-        const s = part.replace(/\.awsui-one-theme\b/g, "").replace(/\s+/g, " ").trim();
+  const normParts = (parts, strip) => [
+    ...new Set(
+      parts.map((part) => {
+        const s = part.replace(strip, "").replace(/\s+/g, " ").trim();
         return s === "" || /^:not\(#\\9 ?\)$/.test(s) ? "body" : s;
       })
-      .sort()
-      .join(",");
+    ),
+  ].sort().join(",");
+  const norm = (sel) =>
+    normParts(
+      sel.replace(ONE_THEME_WHERE, "").replace(/:not\(\.awsui-one-theme\)/g, "").split(","),
+      /\.awsui-one-theme\b/g
+    );
+  // Same element, minus the dark-mode qualifier (e.g. ".awsui-polaris-dark-mode" → "body").
+  const lightKey = (key) => normParts(key.split(","), /\.awsui-polaris-dark-mode\b/g);
   const hasOneTheme = (sel) =>
     sel.replace(ONE_THEME_WHERE, "").replace(/:not\(\.awsui-one-theme\)/g, "").includes("awsui-one-theme");
 
@@ -67,7 +71,10 @@
         const key = norm(sel);
         let m = acc.base.get(key);
         if (!m) acc.base.set(key, (m = new Map()));
-        for (const p of props) m.set(p, r.style.getPropertyValue(p).trim());
+        for (const p of props) {
+          m.set(p, r.style.getPropertyValue(p).trim());
+          acc.knownProps.add(p);
+        }
         if (sel.includes("polaris-dark-mode")) for (const p of props) acc.darkProps.add(p);
       }
     }
@@ -98,25 +105,39 @@
   }
 
   function build() {
-    const acc = { rules: [], restored: new Set(), oneTheme: [], base: new Map(), darkProps: new Set() };
+    const acc = { rules: [], restored: new Set(), oneTheme: [], base: new Map(), darkProps: new Set(), knownProps: new Set() };
     for (const sheet of document.styleSheets) {
       if (sheet.ownerNode && sheet.ownerNode.id === STYLE_ID) continue;
       const rules = sheetRules(sheet);
       if (rules) collect(rules, acc);
     }
+    // What the old theme resolved token `p` to on the element matched by `key`.
+    const resolve = (key, p) => {
+      const exact = acc.base.get(key);
+      if (exact && exact.has(p)) return exact.get(p);
+      // No dark-specific rule: the light base rule on the same element applied.
+      const light = lightKey(key);
+      const lb = light !== key && acc.base.get(light);
+      if (lb && lb.has(p)) return lb.get(p);
+      // No rule on this element at all: the token simply inherited (custom
+      // properties inherit by default). Not on body, where there's no parent.
+      if (light !== "body" && acc.knownProps.has(p)) return "inherit";
+      return null;
+    };
+
     const undo = [];
     for (const { sel, props } of acc.oneTheme) {
-      const base = acc.base.get(norm(sel));
-      if (!base) continue;
+      const key = norm(sel);
       // A light-mode one-theme rule must not force a light base value over a
       // dark-mode base rule on the same element; the dark one-theme rule (if
       // any) handles that token instead.
       const lightRule = !sel.includes("polaris-dark-mode");
       const decls = [];
       for (const p of props) {
-        if (acc.restored.has(p) || !base.has(p)) continue;
+        if (acc.restored.has(p)) continue;
         if (lightRule && acc.darkProps.has(p)) continue;
-        decls.push(`${p}:${base.get(p)} !important`);
+        const v = resolve(key, p);
+        if (v !== null) decls.push(`${p}:${v} !important`);
       }
       if (decls.length) undo.push(`${sel}{${decls.join(";")}}`);
     }
