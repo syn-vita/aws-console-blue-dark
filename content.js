@@ -283,6 +283,12 @@
     chrome.storage.onChanged.addListener((c) => {
       if (c.enabled) { enabled = c.enabled.newValue; persist(); updateToggle(); }
     });
+    // Let the popup theme itself after the console (light / dark).
+    if (window === window.top) {
+      chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+        if (msg && msg.type === "get-state") sendResponse({ dark: isDark(), enabled });
+      });
+    }
   } catch { /* extension reloaded */ }
 
   // 3) Dark-mode class lives on <html> or <body>; watch only those two.
