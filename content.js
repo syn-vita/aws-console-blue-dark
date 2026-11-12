@@ -13,7 +13,10 @@
 
 (() => {
   const STYLE_ID = "aws-blue-dark-restore";
-  const CACHE_KEY = "awsBlueDark.v2";
+  // Bump the version when the generated CSS format changes, so old (larger)
+  // rules aren't merged back in forever.
+  const CACHE_KEY = "awsBlueDark.v3";
+  const OLD_CACHE_KEYS = ["awsBlueDark.v2"];
   const CACHE_MAX_CHARS = 2_000_000;
   const ONE_THEME_WHERE = /:where\(:not\(\.awsui-one-theme\):not\(\.awsui-one-theme \*\)\)/g;
   const fetchedText = new Map(); // href -> css text (cross-origin sheets)
@@ -26,6 +29,7 @@
   const writeCache = (data) => {
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch { /* quota / blocked */ }
   };
+  try { for (const k of OLD_CACHE_KEYS) localStorage.removeItem(k); } catch { /* blocked */ }
   const cache = readCache();
   let enabled = cache.enabled !== false;
   let lastDark = cache.dark === true;
@@ -34,7 +38,8 @@
   // localStorage is per origin, so each region (us-east-1, eu-west-1 …) would
   // start empty. Extension storage is shared by all of them: it seeds a new
   // origin's cache and collects rules from every console page visited.
-  const SHARED_KEY = "awsBlueDark.shared";
+  const SHARED_KEY = "awsBlueDark.shared.v2";
+  try { chrome.storage.local.remove("awsBlueDark.shared"); } catch { /* extension reloaded */ }
   // Lines from `extra` that `base` lacks go first; `base` keeps the last word.
   const mergeLines = (extra, base) => {
     const have = new Set(base);
@@ -84,27 +89,18 @@
       const sel = r.selectorText;
       if (!sel || !r.style) continue;
 
+      const vals = [];
+      for (const p of r.style) if (p.startsWith("--color-")) vals.push([p, r.style.getPropertyValue(p).trim()]);
+      if (!vals.length) continue;
+
       if (sel.includes("awsui-visual-refresh")) {
         if (!sel.includes(":not(.awsui-one-theme)")) continue;
-        const decls = [];
-        for (const p of r.style) {
-          if (!p.startsWith("--color-")) continue;
-          decls.push(`${p}:${r.style.getPropertyValue(p).trim()} !important`);
-          part.restored.push(p);
-        }
-        if (decls.length) part.legacy.push(`${retarget(sel)}{${decls.join(";")}}`);
-        continue;
-      }
-
-      const props = [];
-      for (const p of r.style) if (p.startsWith("--color-")) props.push(p);
-      if (!props.length) continue;
-
-      if (hasOneTheme(sel)) {
-        part.oneTheme.push({ sel, props });
+        for (const [p] of vals) part.restored.push(p);
+        part.legacy.push({ sel: retarget(sel), vals });
+      } else if (hasOneTheme(sel)) {
+        part.oneTheme.push({ sel, vals });
       } else {
-        const dark = sel.includes("polaris-dark-mode");
-        part.base.push({ key: norm(sel), dark, vals: props.map((p) => [p, r.style.getPropertyValue(p).trim()]) });
+        part.base.push({ key: norm(sel), dark: sel.includes("polaris-dark-mode"), vals });
       }
     }
   }
@@ -190,25 +186,65 @@
       return null;
     };
 
-    const undo = [];
-    for (const { sel, props } of oneTheme) {
+    // Rules to emit, in order: undo (strategy B) first, then legacy (A).
+    const emit = [];
+    for (const { sel, vals } of oneTheme) {
       const key = norm(sel);
       // A light-mode one-theme rule must not force a light base value over a
       // dark-mode base rule on the same element; the dark one-theme rule (if
       // any) handles that token instead.
       const lightRule = !sel.includes("polaris-dark-mode");
       const decls = [];
-      for (const p of props) {
+      for (const [p] of vals) {
         if (restored.has(p)) continue;
         if (lightRule && darkProps.has(p)) continue;
         const v = resolve(key, p);
-        if (v !== null) decls.push(`${p}:${v} !important`);
+        if (v !== null) decls.push([p, v]);
       }
-      if (decls.length) undo.push(`${sel}{${decls.join(";")}}`);
+      if (decls.length) emit.push({ sel, decls });
+    }
+    for (const { sel, vals } of legacy) emit.push({ sel, decls: vals });
+
+    // Drop tokens the new theme already sets to the same thing. A token is
+    // dropped only if, for every selector the new theme sets it on, we'd
+    // restore the identical value on the same selector (and nowhere else),
+    // so the page resolves the same with or without our rule. Most semantic
+    // tokens qualify (e.g. both point at var(--color-neutral-850-…)) once the
+    // palette itself is restored.
+    const CONFLICT = Symbol("conflict");
+    const byProp = (rules, keyOf, entriesOf) => {
+      const out = new Map();
+      for (const r of rules) {
+        const key = keyOf(r);
+        for (const [p, v] of entriesOf(r)) {
+          let m = out.get(p);
+          if (!m) out.set(p, (m = new Map()));
+          const prev = m.get(key);
+          m.set(key, prev === undefined || prev === v ? v : CONFLICT);
+        }
+      }
+      return out;
+    };
+    const ours = byProp(emit, (r) => norm(r.sel), (r) => r.decls);
+    const theirs = byProp(oneTheme, (r) => norm(r.sel), (r) => r.vals);
+    const same = (p) => {
+      const a = ours.get(p);
+      const b = theirs.get(p);
+      if (!a || !b || a.size !== b.size) return false;
+      for (const [k, v] of a) if (v === CONFLICT || b.get(k) !== v) return false;
+      return true;
+    };
+    const dropped = new Set();
+    for (const p of ours.keys()) if (same(p)) dropped.add(p);
+
+    const lines = [];
+    for (const { sel, decls } of emit) {
+      const kept = decls.filter(([p]) => !dropped.has(p)).map(([p, v]) => `${p}:${v} !important`);
+      if (kept.length) lines.push(`${sel}{${kept.join(";")}}`);
     }
     // Several service bundles ship identical rules; dedupe the output,
     // keeping the last copy so cascade order is unchanged.
-    return [...new Set(undo.concat(legacy).reverse())].reverse();
+    return [...new Set(lines.reverse())].reverse();
   }
 
   // ---------- style element ----------
