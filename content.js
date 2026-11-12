@@ -31,6 +31,17 @@
   let lastDark = cache.dark === true;
   let cachedLines = Array.isArray(cache.lines) ? cache.lines : [];
 
+  // localStorage is per origin, so each region (us-east-1, eu-west-1 …) would
+  // start empty. Extension storage is shared by all of them: it seeds a new
+  // origin's cache and collects rules from every console page visited.
+  const SHARED_KEY = "awsBlueDark.shared";
+  // Lines from `extra` that `base` lacks go first; `base` keeps the last word.
+  const mergeLines = (extra, base) => {
+    const have = new Set(base);
+    const merged = extra.filter((l) => !have.has(l)).concat(base);
+    return merged.join("\n").length > CACHE_MAX_CHARS ? base : merged;
+  };
+
   // ---------- selector helpers ----------
 
   // Strategy A (older bundles): the blue theme is guarded by
@@ -260,6 +271,21 @@
     writeCache({ enabled, dark: lastDark, lines: cachedLines });
   }
 
+  // Push this page's rules into the shared cache (debounced; merges so other
+  // tabs' rules aren't lost).
+  let sharedTimer = 0;
+  function persistShared() {
+    clearTimeout(sharedTimer);
+    sharedTimer = setTimeout(() => {
+      if (!active()) return;
+      chrome.storage.local.get(SHARED_KEY, (v) => {
+        const shared = (v && v[SHARED_KEY]) || {};
+        const lines = mergeLines(Array.isArray(shared.lines) ? shared.lines : [], cachedLines);
+        chrome.storage.local.set({ [SHARED_KEY]: { dark: lastDark, lines } });
+      });
+    }, 1000);
+  }
+
   // ---------- refresh ----------
 
   function refresh() {
@@ -269,13 +295,11 @@
       const fresh = build(parts);
       // Keep rules for bundles seen on other pages so their first paint is
       // already blue; current-page rules go last so they win.
-      const freshSet = new Set(fresh);
-      let merged = cachedLines.filter((l) => !freshSet.has(l)).concat(fresh);
-      if (merged.join("\n").length > CACHE_MAX_CHARS) merged = fresh;
+      const merged = mergeLines(cachedLines, fresh);
       const grew = merged.length !== cachedLines.length || merged.some((l, i) => l !== cachedLines[i]);
       cachedLines = merged;
       setCss(merged);
-      if (grew) persist();
+      if (grew) { persist(); persistShared(); }
     } else {
       styleEl();
     }
@@ -301,7 +325,24 @@
   if (cachedLines.length) setCss(cachedLines);
   updateToggle();
 
-  // 2) Sync the on/off switch with extension storage.
+  // 2) Pull in rules other regions have seen. On a first visit to a region
+  //    this is what paints the page blue before its stylesheets are scanned.
+  try {
+    chrome.storage.local.get(SHARED_KEY, (v) => {
+      const shared = v && v[SHARED_KEY];
+      if (!active() || !shared || !Array.isArray(shared.lines)) return;
+      const firstVisit = cachedLines.length === 0;
+      const merged = mergeLines(shared.lines, cachedLines);
+      if (merged.length === cachedLines.length) return;
+      cachedLines = merged;
+      if (firstVisit && !document.body) lastDark = shared.dark === true;
+      setCss(merged);
+      persist();
+      updateToggle();
+    });
+  } catch { /* extension reloaded */ }
+
+  // 3) Sync the on/off switch with extension storage.
   try {
     chrome.storage.sync.get({ enabled: true }, (v) => {
       if (v.enabled !== enabled) { enabled = v.enabled; persist(); }
@@ -318,14 +359,14 @@
     }
   } catch { /* extension reloaded */ }
 
-  // 3) Dark-mode class lives on <html> or <body>; watch only those two.
+  // 4) Dark-mode class lives on <html> or <body>; watch only those two.
   const classObserver = new MutationObserver(updateToggle);
   observers.push(classObserver);
   const watchClasses = (node) => node && classObserver.observe(node, { attributes: true, attributeFilter: ["class"] });
   watchClasses(document.documentElement);
   watchClasses(document.body);
 
-  // 4) Refresh as stylesheets arrive (SPA route changes, lazy service bundles).
+  // 5) Refresh as stylesheets arrive (SPA route changes, lazy service bundles).
   const sheetObserver = new MutationObserver((muts) => {
     let changed = false;
     for (const m of muts) {
