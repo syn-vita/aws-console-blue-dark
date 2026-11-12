@@ -3,14 +3,134 @@
 <head>
 <meta charset="utf-8">
 <style>
-  body { margin: 0; padding: 12px 14px; width: 220px; font: 13px system-ui, sans-serif; background: #161d26; color: #dedee3; }
-  label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
-  p { margin: 8px 0 0; color: #8c8c94; font-size: 12px; }
+  /* Dark + enabled: the classic AWS dark blue. */
+  :root, body[data-theme="blue"] {
+    --bg: #0f141a;
+    --card: #161d26;
+    --border: #232b37;
+    --text: #f3f3f7;
+    --muted: #8c8c94;
+    --track-off: #333843;
+    --track-on: #2f81f7;
+    --knob: #ffffff;
+    --note-bg: #1b232d;
+    --note-text: #b4b4bb;
+    --note-accent: #539fe5;
+  }
+  /* Dark + disabled: AWS's new near-black. */
+  body[data-theme="black"] {
+    --bg: #0a0908;
+    --card: #161512;
+    --border: #2f2d28;
+    --text: #f3f3f1;
+    --muted: #949088;
+    --track-off: #3e3b35;
+    --note-bg: #201e1b;
+    --note-text: #bab7b0;
+  }
+  /* Console is in light mode. */
+  body[data-theme="light"] {
+    --bg: #ffffff;
+    --card: #f6f6f9;
+    --border: #dedee3;
+    --text: #0f141a;
+    --muted: #656871;
+    --track-off: #c6c6cd;
+    --track-on: #0972d3;
+    --note-bg: #f0f7ff;
+    --note-text: #0f141a;
+    --note-accent: #0972d3;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    width: 300px;
+    padding: 12px;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    opacity: 0;
+    transition: opacity 0.12s ease, background-color 0.25s ease, color 0.25s ease;
+  }
+  body.ready { opacity: 1; }
+
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+  }
+  .text { flex: 1; min-width: 0; }
+  .title { margin: 0; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+  .subtitle { margin: 3px 0 0; color: var(--muted); font-size: 12px; transition: color 0.25s ease; }
+
+  .switch {
+    flex: none;
+    position: relative;
+    width: 42px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--track-off);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  .switch[aria-checked="true"] { background: var(--track-on); }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--knob);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s cubic-bezier(0.3, 0.7, 0.4, 1);
+  }
+  .switch[aria-checked="true"]::after { transform: translateX(18px); }
+  .switch:focus-visible { outline: 2px solid var(--track-on); outline-offset: 2px; }
+
+  .note {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 9px 12px;
+    background: var(--note-bg);
+    border-left: 3px solid var(--note-accent);
+    border-radius: 8px;
+    color: var(--note-text);
+    font-size: 12px;
+  }
+  .note[hidden] { display: none; }
+  .note svg { flex: none; margin-top: 1px; color: var(--note-accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    body, .card, .switch, .switch::after, .subtitle { transition: none; }
+  }
 </style>
 </head>
 <body>
-  <label><input type="checkbox" id="enabled"> Restore blue dark mode</label>
-  <p>Applies only when the console is in dark mode.</p>
+  <div class="card">
+    <div class="text">
+      <p class="title" id="label">Restore blue dark mode</p>
+      <p class="subtitle">Swap AWS's black theme for the classic dark blue.</p>
+    </div>
+    <button class="switch" id="toggle" role="switch" aria-checked="true" aria-labelledby="label"></button>
+  </div>
+  <div class="note" id="note" role="status" hidden>
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M8 7v4.5M8 4.5v.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <span id="note-text"></span>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>
