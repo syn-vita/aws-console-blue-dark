@@ -2,3 +2,6 @@
 *.zip
 *.crx
 *.pem
+
+# Global "Icon?" rule matches this folder on case-insensitive macOS
+!/icons/
