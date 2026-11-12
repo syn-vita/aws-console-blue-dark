@@ -218,8 +218,29 @@
     return !!document.querySelector(".awsui-polaris-dark-mode");
   };
 
+  // ---------- lifecycle ----------
+
+  // When the extension is reloaded, the old copy of this script keeps running
+  // in open tabs but can no longer talk to the extension. A fresh copy is
+  // injected by the service worker; the old one must stop touching the page.
+  let alive = true;
+  const observers = [];
+  function teardown() {
+    if (!alive) return;
+    alive = false;
+    for (const o of observers) o.disconnect();
+  }
+  const orphaned = () => {
+    try { return !chrome.runtime || !chrome.runtime.id; } catch { return true; }
+  };
+  const active = () => {
+    if (alive && orphaned()) teardown();
+    return alive;
+  };
+
   // Cheap: only flips the <style> on/off. Runs on dark-mode toggles.
   function updateToggle() {
+    if (!active()) return;
     const el = document.getElementById(STYLE_ID);
     const dark = isDark();
     // Only touch dark mode; light mode stays exactly as AWS ships it.
@@ -242,6 +263,7 @@
   // ---------- refresh ----------
 
   function refresh() {
+    if (!active()) return;
     const { parts, changed } = scanAll();
     if (changed) {
       const fresh = build(parts);
@@ -270,6 +292,11 @@
 
   // ---------- boot ----------
 
+  // 0) Tell any older copy in this frame to stand down, then listen for the
+  //    next one. Dispatching first means this copy doesn't stop itself.
+  document.dispatchEvent(new Event("aws-blue-dark:takeover"));
+  document.addEventListener("aws-blue-dark:takeover", teardown);
+
   // 1) Paint from cache immediately.
   if (cachedLines.length) setCss(cachedLines);
   updateToggle();
@@ -293,12 +320,13 @@
 
   // 3) Dark-mode class lives on <html> or <body>; watch only those two.
   const classObserver = new MutationObserver(updateToggle);
+  observers.push(classObserver);
   const watchClasses = (node) => node && classObserver.observe(node, { attributes: true, attributeFilter: ["class"] });
   watchClasses(document.documentElement);
   watchClasses(document.body);
 
   // 4) Refresh as stylesheets arrive (SPA route changes, lazy service bundles).
-  new MutationObserver((muts) => {
+  const sheetObserver = new MutationObserver((muts) => {
     let changed = false;
     for (const m of muts) {
       for (const n of m.addedNodes) {
@@ -308,7 +336,9 @@
       }
     }
     if (changed) queueRefresh();
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  });
+  sheetObserver.observe(document.documentElement, { childList: true, subtree: true });
+  observers.push(sheetObserver);
 
   document.addEventListener("DOMContentLoaded", refresh, { once: true });
   window.addEventListener("load", refresh, { once: true });
