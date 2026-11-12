@@ -47,6 +47,19 @@ const tabReady = new Promise((resolve) => {
   });
 });
 
+// Show the keyboard shortcut, if one is bound (users can rebind or clear it).
+chrome.commands.getAll((commands) => {
+  const cmd = commands.find((c) => c.name === "toggle-restore");
+  if (!cmd || !cmd.shortcut) return;
+  document.getElementById("shortcut").textContent = cmd.shortcut;
+  document.getElementById("hint").hidden = false;
+});
+
+// Keep the switch in sync if the shortcut is used while the popup is open.
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === "sync" && c.enabled) { state.enabled = c.enabled.newValue; render(); }
+});
+
 const show = () => { render(); document.body.classList.add("ready"); };
 Promise.all([enabledReady, tabReady]).then(show);
 setTimeout(show, 300); // never stay hidden if the tab doesn't answer

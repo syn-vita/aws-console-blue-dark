@@ -25,6 +25,12 @@ chrome.storage.onChanged.addListener((c, area) => {
   if (area === "sync" && c.enabled) syncIcon(c.enabled.newValue);
 });
 
+// Keyboard shortcut (default Alt+Shift+D / ⌥⇧D; rebind at chrome://extensions/shortcuts).
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== "toggle-restore") return;
+  chrome.storage.sync.get({ enabled: true }, (v) => chrome.storage.sync.set({ enabled: !v.enabled }));
+});
+
 // Chrome doesn't re-run content scripts in tabs that were already open when
 // the extension is installed or reloaded, so those tabs would keep the old
 // version (or none). Inject the current one; it takes over from any old copy.
