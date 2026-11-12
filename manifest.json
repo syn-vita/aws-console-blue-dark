@@ -20,5 +20,6 @@
       "run_at": "document_start",
       "all_frames": true
     }
-  ]
+  ],
+  "action": { "default_title": "AWS Blue Dark Mode", "default_popup": "popup.html" }
 }
